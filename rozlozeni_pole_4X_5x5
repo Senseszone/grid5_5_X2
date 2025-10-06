@@ -1,0 +1,143 @@
+// src/components/QuadrantPlayfield.jsx
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+/* iSenses bridge */
+function useISensesBridge(props) {
+  const { onEvent, onScore } = props;
+  const [sessionId, setSessionId] = useState(props.sessionId || "");
+  const [config, setConfig] = useState(props.config || {});
+  useEffect(() => {
+    const h = (e) => {
+      const msg = e.data; if (!msg || typeof msg !== "object") return;
+      if (msg.type === "SS_START" && msg.sessionId) {
+        setSessionId(msg.sessionId);
+        if (msg.config) setConfig((c) => ({ ...c, ...msg.config }));
+      }
+      if (msg.type === "SS_CONFIG" && msg.config) {
+        setConfig((c) => ({ ...c, ...msg.config }));
+      }
+    };
+    window.addEventListener("message", h);
+    return () => window.removeEventListener("message", h);
+  }, []);
+  const emitEvent = useCallback((e) => {
+    onEvent && onEvent(e);
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: "SS_EVENT", payload: e }, "*");
+    }
+  }, [onEvent]);
+  const emitScore = useCallback((s) => {
+    const score = { sessionId: sessionId || props.sessionId, ...s };
+    onScore && onScore(score);
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: "SS_SCORE", payload: score }, "*");
+    }
+  }, [onScore, sessionId, props.sessionId]);
+  return { sessionId: sessionId || props.sessionId, config, emitEvent, emitScore };
+}
+
+/* Hrací plocha 4× kvadrant, každý grid 5×5 */
+export default function QuadrantPlayfield(props) {
+  const taskId = props.taskId || "quadrant-playfield-v1";
+  const { sessionId, config, emitEvent } = useISensesBridge(props);
+
+  const GRID = 5; // fixní 5×5 jak požaduješ
+  const GAP = Number(config?.gapPx ?? 6);
+  const CELL_FONT = Number(config?.fontPx ?? 18);
+
+  // identifikace kvadrantů (LT, RT, LB, RB)
+  const quads = useMemo(() => (config?.quadrants ?? ["Q1", "Q2", "Q3", "Q4"]), [config]);
+
+  // volitelné callbacky zvenku
+  const onCellClick = props.onCellClick || (() => {});
+  const renderCell = props.renderCell || ((qId, idx) => null); // custom obsah buňky
+  const cellDisabled = props.cellDisabled || (() => false);    // např. zamykání
+
+  const start = () => emitEvent({ type: "START", ts: Date.now(), data: { sessionId, taskId, grid: "4×(5×5)" } });
+  const stop  = () => emitEvent({ type: "STOP",  ts: Date.now(), data: { sessionId, taskId } });
+
+  const styles = {
+    bgBlue: "#1A4E8A", // PANTONE 4153 C HEX
+    panel: "#0D2B55",
+    white: "#FFFFFF",
+    border: "#D50032"
+  };
+
+  const Quadrant = ({ qid, label }) => (
+    <div style={{
+      background: styles.panel,
+      borderRadius: 12,
+      padding: GAP,
+      display: "grid",
+      gridTemplateColumns: `repeat(${GRID}, 1fr)`,
+      gridTemplateRows: `repeat(${GRID}, 1fr)`,
+      gap: GAP,
+      minHeight: 0,
+      minWidth: 0
+    }}>
+      {Array.from({ length: GRID * GRID }, (_, i) => (
+        <button
+          key={`${qid}-${i}`}
+          onClick={() => onCellClick(qid, i)}
+          disabled={cellDisabled(qid, i)}
+          style={{
+            background: styles.white,
+            border: `2px solid ${styles.border}`,
+            borderRadius: 8,
+            fontWeight: 700,
+            fontSize: CELL_FONT,
+            color: "#111",
+            cursor: cellDisabled(qid, i) ? "default" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            userSelect: "none",
+            minHeight: 0,
+            minWidth: 0
+          }}
+        >
+          {/* volitelný obsah buňky (číslo, písmeno, tvar...) */}
+          {renderCell(qid, i)}
+        </button>
+      ))}
+      {/* rohový štítek kvadrantu */}
+      <div style={{
+        position: "absolute", // overlay label
+      }} />
+    </div>
+  );
+
+  return (
+    <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column", background: styles.bgBlue, color: "#fff", padding: 16, gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 20, fontWeight: 700 }}>Quadrant Playfield – 4× (5×5)</div>
+        <div style={{ fontSize: 12, opacity: 0.85 }}>session: {sessionId || "–"} · task: {taskId}</div>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <button onClick={start} style={{ padding: "8px 16px", borderRadius: 12, background: "#fff", color: "#000", border: "none" }}>Start</button>
+        <button onClick={stop}  style={{ padding: "8px 16px", borderRadius: 12, background: "#fff", color: "#000", border: "none" }}>Ukončit</button>
+      </div>
+
+      {/* 2×2 rozložení kvadrantů, responzivní (stejné poměry) */}
+      <div style={{
+        flex: 1,
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gridTemplateRows: "1fr 1fr",
+        gap: 12,
+        minHeight: 0,
+        minWidth: 0
+      }}>
+        <Quadrant qid={quads[0]} label="Q1" />
+        <Quadrant qid={quads[1]} label="Q2" />
+        <Quadrant qid={quads[2]} label="Q3" />
+        <Quadrant qid={quads[3]} label="Q4" />
+      </div>
+
+      <div style={{ fontSize: 12, opacity: 0.85 }}>
+        Plocha obsahuje 4 kvadranty, každý mřížka 5×5. Obsah a chování buněk řídí hra přes <code>renderCell(qid, idx)</code> a <code>onCellClick(qid, idx)</code>.
+      </div>
+    </div>
+  );
+}
